@@ -93,7 +93,7 @@ def notify_new_item(item) -> None:
     message = f"{item.name}\n{price}\n{url}"
 
     try:
-        httpx.post(
+        resp = httpx.post(
             NTFY_URL,
             data=message.encode("utf-8"),
             headers={
@@ -103,6 +103,8 @@ def notify_new_item(item) -> None:
             },
             timeout=15,
         )
+        resp.raise_for_status()
+        print(f"Notified for {item.id_} -> ntfy responded {resp.status_code}")
     except httpx.HTTPError as e:
         # Don't let a notification failure crash the whole run
         print(f"Failed to send notification for {item.id_}: {e}")
