@@ -2,23 +2,28 @@
 Mercari (jp.mercari.com) new-listing watcher.
 
 Searches for a keyword, compares results against a list of item IDs
-we've already seen (stored in seen.json), and pushes a phone
-notification via ntfy.sh for anything new.
+we've already seen, and pushes a phone notification via ntfy.sh for
+anything new.
+
+State storage: a private GitHub Gist, read and written over the
+GitHub API. This is the key difference from the first version of this
+script - there is no git clone/commit/push involved in remembering
+state, so there's nothing to race or conflict. Each run does one GET
+(read current state) and one PATCH (write updated state) against the
+gist, both plain HTTPS calls.
 
 Free building blocks used:
   - mercapi: unofficial, open-source Python client for jp.mercari.com
-    (https://github.com/take-kun/mercapi) - handles the request
-    signing Mercari requires, no API key needed.
+    (https://github.com/take-kun/mercapi)
+  - GitHub Gists: free, already have a GitHub account, used as a tiny
+    key-value store via the REST API.
   - ntfy.sh: free push notification service, no account needed.
-
-Run with: python check_mercari.py
 """
 
 import asyncio
 import datetime
 import json
 import os
-import pathlib
 
 import httpx
 from mercapi import Mercapi
@@ -29,25 +34,42 @@ from mercapi.requests.search import SearchRequestData
 QUERY = "hysteric glamour"   # search keyword, matches jp.mercari.com search bar
 PRICE_MIN = None            # e.g. 1000, or None for no minimum
 PRICE_MAX = None            # e.g. 50000, or None for no maximum
-MAX_IDS_KEPT = 1000          # how many old item IDs to remember (keeps file small)
+MAX_IDS_KEPT = 1000          # how many old item IDs to remember (keeps the gist small)
+STATE_FILENAME = "seen.json"  # must match the filename you created in the gist
 
 # --------------------------------------------------------------------------
 
-SEEN_FILE = pathlib.Path(__file__).parent / "seen.json"
+GIST_ID = os.environ["GIST_ID"]
+GIST_TOKEN = os.environ["GIST_TOKEN"]
 NTFY_TOPIC = os.environ["NTFY_TOPIC"]
+
+GIST_API = f"https://api.github.com/gists/{GIST_ID}"
 NTFY_URL = f"https://ntfy.sh/{NTFY_TOPIC}"
 
+GITHUB_HEADERS = {
+    "Authorization": f"Bearer {GIST_TOKEN}",
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
 
-def load_seen() -> dict:
-    if SEEN_FILE.exists():
-        return json.loads(SEEN_FILE.read_text(encoding="utf-8"))
-    return {"last_checked": None, "seen_ids": []}
+
+def load_state() -> dict:
+    resp = httpx.get(GIST_API, headers=GITHUB_HEADERS, timeout=15)
+    resp.raise_for_status()
+    content = resp.json()["files"][STATE_FILENAME]["content"]
+    return json.loads(content)
 
 
-def save_seen(data: dict) -> None:
-    SEEN_FILE.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+def save_state(state: dict) -> None:
+    body = {
+        "files": {
+            STATE_FILENAME: {
+                "content": json.dumps(state, indent=2, ensure_ascii=False)
+            }
+        }
+    }
+    resp = httpx.patch(GIST_API, headers=GITHUB_HEADERS, json=body, timeout=15)
+    resp.raise_for_status()
 
 
 def notify_new_item(item) -> None:
@@ -73,9 +95,9 @@ def notify_new_item(item) -> None:
 
 
 async def main() -> None:
-    is_first_run = not SEEN_FILE.exists()
-    seen = load_seen()
-    seen_ids = set(seen["seen_ids"])
+    state = load_state()
+    seen_ids = set(state.get("seen_ids", []))
+    is_first_run = state.get("last_checked") is None
 
     m = Mercapi()
     results = await m.search(
@@ -99,9 +121,9 @@ async def main() -> None:
         notify_new_item(item)
 
     all_ids = seen_ids | {it.id_ for it in results.items}
-    seen["seen_ids"] = list(all_ids)[-MAX_IDS_KEPT:]
-    seen["last_checked"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    save_seen(seen)
+    state["seen_ids"] = list(all_ids)[-MAX_IDS_KEPT:]
+    state["last_checked"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    save_state(state)
 
     print(f"Checked '{QUERY}'. {len(new_items)} new item(s). {len(results.items)} total in this page.")
 
