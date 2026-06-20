@@ -53,17 +53,31 @@ GITHUB_HEADERS = {
 }
 
 
-def load_state() -> dict:
+def load_state() -> tuple[str, dict]:
     resp = httpx.get(GIST_API, headers=GITHUB_HEADERS, timeout=15)
     resp.raise_for_status()
-    content = resp.json()["files"][STATE_FILENAME]["content"]
-    return json.loads(content)
+    files = resp.json()["files"]
+
+    if STATE_FILENAME in files:
+        filename = STATE_FILENAME
+    elif len(files) == 1:
+        filename = next(iter(files))
+        print(f"Note: gist file is named '{filename}', not '{STATE_FILENAME}' - using it anyway.")
+    else:
+        raise RuntimeError(
+            f"Gist has {len(files)} file(s) ({list(files)}) and none is named "
+            f"'{STATE_FILENAME}'. Make sure the gist has exactly one file, "
+            f"or rename it to '{STATE_FILENAME}'."
+        )
+
+    content = files[filename]["content"]
+    return filename, json.loads(content)
 
 
-def save_state(state: dict) -> None:
+def save_state(filename: str, state: dict) -> None:
     body = {
         "files": {
-            STATE_FILENAME: {
+            filename: {
                 "content": json.dumps(state, indent=2, ensure_ascii=False)
             }
         }
@@ -95,7 +109,7 @@ def notify_new_item(item) -> None:
 
 
 async def main() -> None:
-    state = load_state()
+    filename, state = load_state()
     seen_ids = set(state.get("seen_ids", []))
     is_first_run = state.get("last_checked") is None
 
@@ -123,7 +137,7 @@ async def main() -> None:
     all_ids = seen_ids | {it.id_ for it in results.items}
     state["seen_ids"] = list(all_ids)[-MAX_IDS_KEPT:]
     state["last_checked"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    save_state(state)
+    save_state(filename, state)
 
     print(f"Checked '{QUERY}'. {len(new_items)} new item(s). {len(results.items)} total in this page.")
 
