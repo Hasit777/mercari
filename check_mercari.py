@@ -43,6 +43,13 @@ GIST_ID = os.environ["GIST_ID"]
 GIST_TOKEN = os.environ["GIST_TOKEN"]
 NTFY_TOPIC = os.environ["NTFY_TOPIC"]
 
+if not NTFY_TOPIC.strip():
+    raise RuntimeError(
+        "NTFY_TOPIC is set but empty. Check Settings -> Secrets and variables "
+        "-> Actions -> NTFY_TOPIC in your repo and make sure it actually has "
+        "your topic name as the value, not a blank value."
+    )
+
 GIST_API = f"https://api.github.com/gists/{GIST_ID}"
 NTFY_URL = f"https://ntfy.sh/{NTFY_TOPIC}"
 
@@ -51,6 +58,10 @@ GITHUB_HEADERS = {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
 }
+
+TRANSLATE_API_URL = "https://api.mymemory.translated.net/get"  # free, no key needed
+FX_API_URL = "https://api.frankfurter.app/latest"              # free, no key needed
+FALLBACK_JPY_TO_GBP = 0.0052  # rough backup rate, only used if the live lookup fails
 
 
 def load_state() -> tuple[str, dict]:
@@ -86,11 +97,46 @@ def save_state(filename: str, state: dict) -> None:
     resp.raise_for_status()
 
 
-def notify_new_item(item) -> None:
+def get_jpy_to_gbp_rate() -> float:
+    """Live JPY->GBP rate, with a rough fallback if the lookup fails."""
+    try:
+        resp = httpx.get(FX_API_URL, params={"from": "JPY", "to": "GBP"}, timeout=10)
+        resp.raise_for_status()
+        return resp.json()["rates"]["GBP"]
+    except Exception as e:
+        print(f"Could not fetch live JPY->GBP rate, using fallback: {e}")
+        return FALLBACK_JPY_TO_GBP
+
+
+def translate_to_english(text: str) -> str:
+    """Best-effort translation. Falls back to the original text on failure."""
+    try:
+        resp = httpx.get(
+            TRANSLATE_API_URL,
+            params={"q": text, "langpair": "ja|en"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        translated = data["responseData"]["translatedText"]
+        return translated if translated else text
+    except Exception as e:
+        print(f"Translation failed, using original text: {e}")
+        return text
+
+
+def notify_new_item(item, gbp_rate: float) -> None:
     """Push a notification for one new listing via ntfy.sh."""
     url = f"https://jp.mercari.com/item/{item.id_}"
-    price = f"¥{item.price:,}"
-    message = f"{item.name}\n{price}\n{url}"
+    price_jpy = item.price
+    price_gbp = price_jpy * gbp_rate
+    name_en = translate_to_english(item.name)
+    message = (
+        f"{name_en}\n"
+        f"({item.name})\n"
+        f"¥{price_jpy:,}  (~£{price_gbp:,.2f})\n"
+        f"{url}"
+    )
 
     try:
         resp = httpx.post(
@@ -133,8 +179,10 @@ async def main() -> None:
     else:
         new_items = [it for it in results.items if it.id_ not in seen_ids]
 
+    gbp_rate = get_jpy_to_gbp_rate() if new_items else None
+
     for item in new_items:
-        notify_new_item(item)
+        notify_new_item(item, gbp_rate)
 
     all_ids = seen_ids | {it.id_ for it in results.items}
     state["seen_ids"] = list(all_ids)[-MAX_IDS_KEPT:]
