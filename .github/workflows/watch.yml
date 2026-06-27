@@ -2,9 +2,10 @@ name: Mercari Watch
 
 on:
   schedule:
-    # Every 15 minutes. GitHub Actions cron is UTC and best-effort -
-    # busy periods can delay a run by a few minutes.
-    - cron: "*/15 * * * *"
+    # Every 15 minutes, but offset from :00/:15/:30/:45 - those are the
+    # most congested slots on GitHub's scheduler since countless other
+    # repos use the same round numbers. Off-beat minutes queue faster.
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch: {}   # lets you click "Run workflow" manually to test
 
 concurrency:
