@@ -138,15 +138,19 @@ def notify_new_item(item, gbp_rate: float) -> None:
         f"{url}"
     )
 
+    headers = {
+        "Title": f"New listing: {QUERY}",
+        "Click": url,
+        "Tags": "shopping_bags",
+    }
+    if item.thumbnails:
+        headers["Attach"] = item.thumbnails[0]
+
     try:
         resp = httpx.post(
             NTFY_URL,
             data=message.encode("utf-8"),
-            headers={
-                "Title": f"New listing: {QUERY}",
-                "Click": url,
-                "Tags": "shopping_bags",
-            },
+            headers=headers,
             timeout=15,
         )
         resp.raise_for_status()
