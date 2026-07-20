@@ -143,12 +143,6 @@ def notify_new_item(item, gbp_rate: float) -> None:
         "Click": url,
         "Tags": "shopping_bags",
     }
-    if item.thumbnails:
-        thumb_url = item.thumbnails[0]
-        if thumb_url.startswith("//"):
-            thumb_url = "https:" + thumb_url
-        headers["Attach"] = thumb_url
-        print(f"Attaching thumbnail: {thumb_url}")
 
     try:
         resp = httpx.post(
