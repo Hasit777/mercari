@@ -31,7 +31,7 @@ from mercapi.requests.search import SearchRequestData
 
 # ---- Settings you might want to tweak ----------------------------------
 
-QUERY = "hysteric glamour"   # search keyword, matches jp.mercari.com search bar
+QUERY = "sony walkman nw-a60"   # search keyword, matches jp.mercari.com search bar
 PRICE_MIN = None            # e.g. 1000, or None for no minimum
 PRICE_MAX = None            # e.g. 50000, or None for no maximum
 MAX_IDS_KEPT = 1000          # how many old item IDs to remember (keeps the gist small)
